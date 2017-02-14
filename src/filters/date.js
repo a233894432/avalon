@@ -37,14 +37,15 @@ function toInt(str) {
 }
 
 function padNumber(num, digits, trim) {
-    var neg = ""
+    var neg = ''
+    /* istanbul ignore if*/
     if (num < 0) {
         neg = '-'
         num = -num
     }
-    num = "" + num
+    num = '' + num
     while (num.length < digits)
-        num = "0" + num
+        num = '0' + num
     if (trim)
         num = num.substr(num.length - digits)
     return neg + num
@@ -56,6 +57,7 @@ function dateGetter(name, size, offset, trim) {
         if (offset > 0 || value > -offset)
             value += offset
         if (value === 0 && offset === -12) {
+            /* istanbul ignore next*/
             value = 12
         }
         return padNumber(value, size, trim)
@@ -77,7 +79,6 @@ function timeZoneGetter(date) {
     return paddedZone
 }
 //取得上午下午
-
 function ampmGetter(date, formats) {
     return date.getHours() < 12 ? formats.AMPMS[0] : formats.AMPMS[1]
 }
@@ -107,11 +108,11 @@ var DATE_FORMATS = {
 }
 var rdateFormat = /((?:[^yMdHhmsaZE']+)|(?:'(?:[^']|'')*')|(?:E+|y+|M+|d+|H+|h+|m+|s+|a|Z))(.*)/
 var raspnetjson = /^\/Date\((\d+)\)\/$/
-function dateFilter(date, format) {
+export function dateFilter(date, format) {
     var locate = dateFilter.locate,
-            text = "",
-            parts = [],
-            fn, match
+        text = "",
+        parts = [],
+        fn, match
     format = format || "mediumDate"
     format = locate[format] || format
     if (typeof date === "string") {
@@ -151,7 +152,7 @@ function dateFilter(date, format) {
                     tzHour = toInt(symbol + c)
                     tzMin = toInt(symbol + d)
                 }
-                return ""
+                return ''
             })
 
             dateArray[3] -= tzHour
@@ -161,14 +162,13 @@ function dateFilter(date, format) {
             date = oDate
         }
     }
-    if (typeof date === "number") {
+    if (typeof date === 'number') {
         date = new Date(date)
     }
-    if (avalon.type(date) !== "date") {
-        return
-    }
+
     while (format) {
         match = rdateFormat.exec(format)
+        /* istanbul ignore else */
         if (match) {
             parts = parts.concat(match.slice(1))
             format = parts.pop()
@@ -187,51 +187,49 @@ function dateFilter(date, format) {
 
 var locate = {
     AMPMS: {
-        0: "上午",
-        1: "下午"
+        0: '上午',
+        1: '下午'
     },
     DAY: {
-        0: "星期日",
-        1: "星期一",
-        2: "星期二",
-        3: "星期三",
-        4: "星期四",
-        5: "星期五",
-        6: "星期六"
+        0: '星期日',
+        1: '星期一',
+        2: '星期二',
+        3: '星期三',
+        4: '星期四',
+        5: '星期五',
+        6: '星期六'
     },
     MONTH: {
-        0: "1月",
-        1: "2月",
-        2: "3月",
-        3: "4月",
-        4: "5月",
-        5: "6月",
-        6: "7月",
-        7: "8月",
-        8: "9月",
-        9: "10月",
-        10: "11月",
-        11: "12月"
+        0: '1月',
+        1: '2月',
+        2: '3月',
+        3: '4月',
+        4: '5月',
+        5: '6月',
+        6: '7月',
+        7: '8月',
+        8: '9月',
+        9: '10月',
+        10: '11月',
+        11: '12月'
     },
     SHORTDAY: {
-        "0": "周日",
-        "1": "周一",
-        "2": "周二",
-        "3": "周三",
-        "4": "周四",
-        "5": "周五",
-        "6": "周六"
+        '0': '周日',
+        '1': '周一',
+        '2': '周二',
+        '3': '周三',
+        '4': '周四',
+        '5': '周五',
+        '6': '周六'
     },
-    fullDate: "y年M月d日EEEE",
-    longDate: "y年M月d日",
-    medium: "yyyy-M-d H:mm:ss",
-    mediumDate: "yyyy-M-d",
-    mediumTime: "H:mm:ss",
-    "short": "yy-M-d ah:mm",
-    shortDate: "yy-M-d",
-    shortTime: "ah:mm"
+    fullDate: 'y年M月d日EEEE',
+    longDate: 'y年M月d日',
+    medium: 'yyyy-M-d H:mm:ss',
+    mediumDate: 'yyyy-M-d',
+    mediumTime: 'H:mm:ss',
+    'short': 'yy-M-d ah:mm',
+    shortDate: 'yy-M-d',
+    shortTime: 'ah:mm'
 }
 locate.SHORTMONTH = locate.MONTH
 dateFilter.locate = locate
-
-module.exports = dateFilter

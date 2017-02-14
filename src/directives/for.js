@@ -1,400 +1,338 @@
-var patch = require('../strategy/patch')
-var rforPrefix = /ms-for\:\s*/
-var rforLeft = /^\s*\(\s*/
-var rforRight = /\s*\)\s*$/
-var rforSplit = /\s*,\s*/
+import { avalon, createFragment, platform, isObject, ap } from '../seed/core'
+
+import { VFragment } from '../vdom/VFragment'
+import { $$skipArray } from '../vmodel/reserved'
+
+import { addScope, makeHandle } from '../parser/index'
+
+
 var rforAs = /\s+as\s+([$\w]+)/
-var rident = require('../seed/regexp').ident
-var update = require('./_update')
-var Cache = require('../seed/cache')
-var loopCache = new Cache(600)
+var rident = /^[$a-zA-Z_][$a-zA-Z0-9_]*$/
 var rinvalid = /^(null|undefined|NaN|window|this|\$index|\$id)$/
-function getTrackKey(item) {
-    var type = typeof item
-    return item && type === 'object' ? item.$hashcode : type + item
-}
-
-avalon._each = function (obj, fn) {
-    if (Array.isArray(obj)) {
-        for (var i = 0; i < obj.length; i++) {
-            var item = obj[i]
-            var key = getTrackKey(item)
-            fn(i, item, key)
-        }
-    } else {
-        for (var i in obj) {
-            if (obj.hasOwnProperty(i)) {
-                fn(i, obj[i], i)
-            }
-        }
-    }
-}
-
-function getLoopValue(object) {
-    if (Array.isArray(object)) {
-        return object.length + "|" + object.map(getTrackKey).join(';;')
-    } else {
-        var size = 0
-        var arr = []
-        for (var i in object) {
-            if (object.hasOwnProperty(i)) {
-                size++
-                arr.push(i)
-            }
-        }
-        return size + "|" + arr.join(';;')
-    }
-}
-
-avalon._checkLoopChange = function (key, obj) {
-    var cur = getLoopValue(obj)
-    var old = loopCache.get(key)
-    if (typeof old !== 'string' || cur !== old) {
-        loopCache.put(key, cur)
-        return true
-    }
-    return false
-}
-
+var rargs = /[$\w_]+/g
 avalon.directive('for', {
+    delay: true,
     priority: 3,
-    parse: function (el, num) {
-        var str = el.nodeValue, aliasAs
-        str = str.replace(rforAs, function (a, b) {
+    beforeInit: function() {
+        var str = this.expr,
+            asName
+        str = str.replace(rforAs, function(a, b) {
+            /* istanbul ignore if */
             if (!rident.test(b) || rinvalid.test(b)) {
                 avalon.error('alias ' + b + ' is invalid --- must be a valid JS identifier which is not a reserved name.')
             } else {
-                aliasAs = b
+                asName = b
             }
             return ''
         })
 
-        var arr = str.replace(rforPrefix, '').split(' in ')
-        var assign = 'var loop' + num + ' = ' + avalon.parseExpr(arr[1]) + '\n'
-        var isChange = el.signature + '.hasChange = avalon._checkLoopChange("' + el.signature + '", loop' + num + ')\n'
-
-        var alias = aliasAs ? 'var ' + aliasAs + ' = loop' + num + '\n' : ''
-        var kv = arr[0].replace(rforLeft, '').replace(rforRight, '').split(rforSplit)
-        if (kv.length === 1) {//确保avalon._each的回调有三个参数
+        var arr = str.split(' in ')
+        var kv = arr[0].match(rargs)
+        if (kv.length === 1) { //确保avalon._each的回调有三个参数
             kv.unshift('$key')
         }
-        //分别创建isArray, ____n, ___i, ___v, ___trackKey变量
-        return assign + isChange + alias + 'avalon._each(loop' + num + ', function(' + kv + ', traceKey){\n'
+        this.expr = arr[1]
+        this.keyName = kv[0]
+        this.valName = kv[1]
+        this.signature = avalon.makeHashCode('for')
+        if (asName) {
+            this.asName = asName
+        }
+
+        delete this.param
+    },
+    init: function() {
+        var cb = this.userCb
+        if (typeof cb === 'string' && cb) {
+            var arr = addScope(cb, 'for')
+            var body = makeHandle(arr[0])
+            this.userCb = new Function('$event', 'var __vmodel__ = this\nreturn ' + body)
+        }
+        this.node.forDir = this //暴露给component/index.js中的resetParentChildren方法使用
+        this.fragment = ['<div>', this.fragment, '<!--', this.signature, '--></div>'].join('')
+        this.cache = {}
 
     },
-    diff: function (current, previous, steps, __index__) {
-        var cur = current[__index__]
-        var pre = previous[__index__] || {}
+    diff: function(newVal, oldVal) {
+        /* istanbul ignore if */
+        if (this.updating) {
+            return
+        }
+        this.updating = true
+        var traceIds = createFragments(this, newVal)
 
-        var isInit = !('directive' in pre)
-        var isChange = false, i, c, p
-        if (isInit) {
-            pre.components = []
-            pre.repeatCount = 0
+        if (this.oldTrackIds === void 0)
+            return true
+
+        if (this.oldTrackIds !== traceIds) {
+            this.oldTrackIds = traceIds
+            return true
         }
 
-        var quota = pre.components.length
-        var nodes = current.slice(cur.start, cur.end)
-        cur.endRepeat = pre.endRepeat
-        cur.components = getComponents(nodes.slice(1, -1), cur.signature)
-        var n = Math.max(nodes.length - 2, 0) - pre.repeatCount
-        if (n > 0) {
-            var spliceArgs = [__index__ + 1, 0]
-            for (var i = 0, n = n - 1; i < n; i++) {
-                spliceArgs.push(null)
-            }
-            previous.splice.apply(previous, spliceArgs)
-        } else if (n < 0) {
-            previous.splice.apply(previous, [__index__, Math.abs(n)])
-        }
-        cur.action = isInit ? 'init' : 'update'
-        if (isInit) {
-            /* eslint-disable no-cond-assign */
-            var oldCount = steps.count
-            var cache = cur.cache = {}
-            for (i = 0; c = cur.components[i++]; ) {
-                /* eslint-enable no-cond-assign */
-                avalon.diff(c.children, [], steps)
-                saveInCache(cache, c)
-            }
-            cur.removedComponents = {}
-            //如果没有孩子也要处理一下
-            isChange = cur.components.length === 0 ||
-                    steps.count !== oldCount
+    },
+    update: function() {
 
+        if (!this.preFragments) {
+            this.fragments = this.fragments || []
+            mountList(this)
         } else {
-            var cache = pre.cache 
-            if(!cache)
-                return
-            var newCache = cur.cache = {}
-            /* eslint-disable no-cond-assign */
-            for (i = 0; c = cur.components[i++]; ) {
-                /* eslint-enable no-cond-assign */
-                var p = isInCache(cache, c.key)
-                if (p) {
-                    if (!isChange) {//如果位置发生了变化
-                        isChange = c.index !== p.index
-                    }
-                    quota--
-                    c.nodes = p.nodes
-                    avalon.diff(c.children, p.children, steps)
-                } else if (quota) {
-                    p = fuzzyMatchCache(cache, c.key)
-                    if (p) {
-                        quota--
-                        isChange = true //内容发生变化
-                        c.nodes = p.nodes
-                        avalon.diff(c.children, p.children, steps)
-                    }
-                }
-                if (!c.nodes) {//这是新添加的元素
-                    isChange = true
-                    avalon.diff(c.children, [], steps)
-                }
-
-                saveInCache(newCache, c)
-            }
-
-            for (i in cache) {
-                cur.removedComponents = cache
-                isChange = true
-                break
-            }
-
-        }
-        pre.components.length = 0 //release memory
-        delete pre.cache
-        if (isChange) {
-            cur.steps = steps
-            update(cur, this.update, steps, 'for')
+            diffList(this)
+            updateList(this)
         }
 
-        return __index__ + nodes.length - 1
-
+        if (this.userCb) {
+            var me = this
+                setTimeout(function(){
+                    me.userCb.call(me.vm, {
+                    type: 'rendered',
+                    target: me.begin.dom,
+                    signature: me.signature
+                })
+            },0)
+            
+        }
+        delete this.updating
     },
-    update: function (startRepeat, vnode, parent) {
-        var action = vnode.action
-        var endRepeat = vnode.endRepeat
-        var fragment = document.createDocumentFragment()
-        if (action === 'init') {
-            //在ms-widget中,这部分内容会先行被渲染出来
-            var hasRender = false
-            var node = startRepeat.nextSibling
-            while (node && node !== endRepeat) {
-                if (node.nodeType === 8) {
-                    hasRender = node.nodeValue === vnode.signature
-                    if (hasRender) {
-                        vnode.hasRender = true
-                        break
-                    }
-                }
-                node = node.nextSibling
-
-            }
-            if (!hasRender) {
-                node = startRepeat.nextSibling
-                while (node && node !== endRepeat) {
-                    parent.removeChild(node)
-                    node = startRepeat.nextSibling
-                }
-            }
-        }
-
-        var domTemplate = avalon.parseHTML(vnode.template)
-
-        var key = vnode.signature
-        for (var i in vnode.removedComponents) {
-            var el = vnode.removedComponents[i]
-            if (el.nodes) {
-                el.nodes.forEach(function (n, k) {
-                    if (n.parentNode) {
-                        avalon.applyEffect(n, el.children[k], {
-                            hook: 'onLeaveDone',
-                            cb: function () {
-                                n.parentNode.removeChild(n)
-                            },
-                            staggerKey: key + 'leave'
-                        })
-                    }
-                })
-                el.nodes.length = el.children.length = 0
-            }
-        }
-
-        delete vnode.removedComponents
-
-        var insertPoint = startRepeat
-
-        for (var i = 0; i < vnode.components.length; i++) {
-            var com = vnode.components[i]
-            var cnodes = com.nodes
-            if (cnodes) {
-                if (insertPoint.nextSibling !== cnodes[0]) {
-                    var moveFragment = fragment.cloneNode(false)
-                    for (var k = 0, cc; cc = cnodes[k++]; ) {
-                        moveFragment.appendChild(cc)
-                    }
-                    parent.insertBefore(moveFragment, insertPoint.nextSibling)
-                    applyEffects(com.nodes, com.children, {
-                        hook: 'onMoveDone',
-                        staggerKey: key + 'move'
-                    })
-                }
-            } else if (vnode.hasRender) {
-                //添加nodes属性但不用插入节点
-                var cnodes = com.nodes = []
-                insertPoint = insertPoint.nextSibling
-                while (insertPoint && insertPoint !== vnode.endRepeat) {
-                    cnodes.push(insertPoint)
-                    if (insertPoint.nodeValue === vnode.signature) {
-                        break
-                    }
-                    insertPoint = insertPoint.nextSibling
-                }
-            } else {
-                //添加nodes属性并插入节点
-                var newFragment = domTemplate.cloneNode(true)
-                newFragment.appendChild(document.createComment(vnode.signature))
-                cnodes = com.nodes = avalon.slice(newFragment.childNodes)
-                parent.insertBefore(newFragment, insertPoint.nextSibling)
-                applyEffects(com.nodes, com.children, {
-                    hook: 'onEnterDone',
-                    staggerKey: key + 'enter'
-                })
-            }
-            insertPoint = cnodes[cnodes.length - 1]
-            if (!insertPoint) {
-                break
-            }
-        }
-        var entity = [], vnodes = []
-        vnode.components.forEach(function (c) {
-            entity.push.apply(entity, c.nodes)
-            vnodes.push.apply(vnodes, c.children)
+    beforeDispose: function() {
+        this.fragments.forEach(function(el) {
+            el.dispose()
         })
-        vnode.repeatCount = vnodes.length
-        patch(entity, vnodes, parent, vnode.steps)
-        var cb = avalon.caches[vnode.cid]
-        if (cb) {
-            cb.call(vnode.vmodel, {
-                type: "rendered",
-                target: startRepeat,
-                endRepeat: endRepeat,
-                signature: vnode.signature
-            })
-        }
-        return false
     }
-
 })
 
-function getRepeatRange(nodes, i) {
-    var isBreak = 0, ret = [], node
-    while (node = nodes[i++]) {
-        if (node.type === '#comment') {
-            if (node.nodeValue.indexOf('ms-for:') === 0) {
-                isBreak++
-            } else if (node.nodeValue.indexOf('ms-for-end:') === 0) {
-                isBreak--
-            }
-        }
-        ret.push(node)
-        if (isBreak === 0) {
-            break
-        }
-    }
-    return ret
+function getTraceKey(item) {
+    var type = typeof item
+    return item && type === 'object' ? item.$hashcode : type + ':' + item
 }
 
+//创建一组fragment的虚拟DOM
+function createFragments(instance, obj) {
+    if (isObject(obj)) {
+        var array = Array.isArray(obj)
+        var ids = []
+        var fragments = [],
+            i = 0
 
-//将要循环的节点根据锚点元素再分成一个个更大的单元,用于diff
-function getComponents(nodes, signature) {
-    var components = []
-    var com = {
-        children: []
-    }
-    for (var i = 0, el; el = nodes[i]; i++) {
-        if (el.nodeType === 8 && el.nodeValue === signature) {
-            com.children.push(el)
-            com.key = el.key
-            com.index = components.length
-            components.push(com)
-            com = {
-                children: []
-            }
+        instance.isArray = array
+        if (instance.fragments) {
+            instance.preFragments = instance.fragments
+            avalon.each(obj, function(key, value) {
+                var k = array ? getTraceKey(value) : key
+
+                fragments.push({
+                    key: k,
+                    val: value,
+                    index: i++
+                })
+                ids.push(k)
+            })
+            instance.fragments = fragments
         } else {
-            com.children.push(el)
+            avalon.each(obj, function(key, value) {
+                if(!(key in $$skipArray)){
+                    var k = array ? getTraceKey(value) : key
+                    fragments.push(new VFragment([], k, value, i++))
+                    ids.push(k)
+                }
+            })
+            instance.fragments = fragments
         }
+        return ids.join(';;')
+    } else {
+        return NaN
     }
-    return components
 }
 
-var rfuzzy = /^(string|number|boolean)/
-var rkfuzzy = /^_*(string|number|boolean)/
-function fuzzyMatchCache(cache, id) {
-    var m = id.match(rfuzzy)
-    if (m) {
-        var fid = m[1]
-        for (var i in cache) {
-            var n = i.match(rkfuzzy)
-            if (n && n[1] === fid) {
-                return isInCache(cache, i)
+
+function mountList(instance) {
+    var args = instance.fragments.map(function(fragment, index) {
+        FragmentDecorator(fragment, instance, index)
+        saveInCache(instance.cache, fragment)
+        return fragment
+    })
+    var list = instance.parentChildren
+    var i = list.indexOf(instance.begin)
+    list.splice.apply(list, [i + 1, 0].concat(args))
+}
+
+function diffList(instance) {
+    var cache = instance.cache
+    var newCache = {}
+    var fuzzy = []
+    var list = instance.preFragments
+
+    list.forEach(function(el) {
+        el._dispose = true
+    })
+
+    instance.fragments.forEach(function(c, index) {
+        var fragment = isInCache(cache, c.key)
+            //取出之前的文档碎片
+        if (fragment) {
+            delete fragment._dispose
+            fragment.oldIndex = fragment.index
+            fragment.index = index // 相当于 c.index
+
+            resetVM(fragment.vm, instance.keyName)
+            fragment.vm[instance.valName] = c.val
+            fragment.vm[instance.keyName] = instance.isArray ? index : fragment.key
+            saveInCache(newCache, fragment)
+
+        } else {
+            //如果找不到就进行模糊搜索
+            fuzzy.push(c)
+        }
+    })
+    fuzzy.forEach(function(c) {
+        var fragment = fuzzyMatchCache(cache, c.key)
+        if (fragment) { //重复利用
+            fragment.oldIndex = fragment.index
+            fragment.key = c.key
+            var val = fragment.val = c.val
+            var index = fragment.index = c.index
+
+            fragment.vm[instance.valName] = val
+            fragment.vm[instance.keyName] = instance.isArray ? index : fragment.key
+            delete fragment._dispose
+        } else {
+
+            c = new VFragment([], c.key, c.val, c.index)
+            fragment = FragmentDecorator(c, instance, c.index)
+            list.push(fragment)
+        }
+        saveInCache(newCache, fragment)
+    })
+
+    instance.fragments = list
+    list.sort(function(a, b) {
+        return a.index - b.index
+    })
+    instance.cache = newCache
+}
+
+function updateItemVm(vm, top) {
+    for (var i in top) {
+        if (top.hasOwnProperty(i)) {
+            vm[i] = top[i]
+        }
+    }
+}
+
+function resetVM(vm, a, b) {
+    if(avalon.config.inProxyMode){
+       vm.$accessors[a].value = NaN
+    }else{
+         vm.$accessors[a].set(NaN)
+    }
+}
+
+
+function updateList(instance) {
+    var before = instance.begin.dom
+    var parent = before.parentNode
+    var list = instance.fragments
+    var end = instance.end.dom
+    for (var i = 0, item; item = list[i]; i++) {
+        if (item._dispose) {
+            list.splice(i, 1)
+            i--
+            item.dispose()
+            continue
+        }
+        if (item.oldIndex !== item.index) {
+            var f = item.toFragment()
+            var isEnd = before.nextSibling === null
+            parent.insertBefore(f, before.nextSibling);
+            if (isEnd && !parent.contains(end)) {
+                parent.insertBefore(end, before.nextSibling)
             }
         }
+        before = item.split
     }
+    var ch = instance.parentChildren
+    var startIndex = ch.indexOf(instance.begin)
+    var endIndex = ch.indexOf(instance.end)
+
+    list.splice.apply(ch, [startIndex + 1, endIndex - startIndex].concat(list))
 }
 
+
+/**
+ * 
+ * @param {type} fragment
+ * @param {type} this
+ * @param {type} index
+ * @returns { key, val, index, oldIndex, this, dom, split, vm}
+ */
+function FragmentDecorator(fragment, instance, index) {
+    var data = {}
+    data[instance.keyName] = instance.isArray ? index : fragment.key
+    data[instance.valName] = fragment.val
+    if (instance.asName) {
+        data[instance.asName] = instance.value
+    }
+    var vm = fragment.vm = platform.itemFactory(instance.vm, {
+        data: data
+    })
+    if (instance.isArray) {
+        vm.$watch(instance.valName, function(a) {
+            if (instance.value && instance.value.set) {
+                instance.value.set(vm[instance.keyName], a)
+            }
+        })
+    } else {
+        vm.$watch(instance.valName, function(a) {
+            instance.value[fragment.key] = a
+        })
+    }
+   
+    fragment.index = index
+    fragment.innerRender = avalon.scan(instance.fragment, vm, function() {
+        var oldRoot = this.root
+        ap.push.apply(fragment.children, oldRoot.children)
+        this.root = fragment
+    })
+    return fragment
+}
 // 新位置: 旧位置
 function isInCache(cache, id) {
-    var c = cache[id], cid = id
+    var c = cache[id]
     if (c) {
-        var ctack = cache["***" + id]
-        if (ctack) {
-            var a = ctack.pop()
-            delete cache[a.id]
-            if (ctack.length == 0)
-                delete cache["***" + id]
-            return a.c
-        }
-        var stack = [{id: id, c: c}]
-        while (1) {
-            id += '_'
-            if (cache[id]) {
-                stack.push({
-                    id: id,
-                    c: cache[id]
-                })
-            } else {
-                break
+        var arr = c.arr
+            /* istanbul ignore if*/
+        if (arr) {
+            var r = arr.pop()
+            if (!arr.length) {
+                c.arr = 0
             }
+            return r
         }
-        var a = stack.pop()
-        delete cache[a.id]
-        if (stack.length) {
-            cache['***' + cid] = stack
-        }
-        return a.c
+        delete cache[id]
+        return c
     }
-    return c
 }
-
+//[1,1,1] number1 number1_ number1__
 function saveInCache(cache, component) {
     var trackId = component.key
     if (!cache[trackId]) {
         cache[trackId] = component
     } else {
-        while (1) {
-            trackId += '_'
-            if (!cache[trackId]) {
-                cache[trackId] = component
-                break
-            }
-        }
+        var c = cache[trackId]
+        var arr = c.arr || (c.arr = [])
+        arr.push(component)
     }
 }
-var applyEffects = function (nodes, vnodes, opts) {
-    vnodes.forEach(function (el, i) {
-        avalon.applyEffect(nodes[i], vnodes[i], opts)
-    })
-}
 
+var rfuzzy = /^(string|number|boolean)/
+var rkfuzzy = /^_*(string|number|boolean)/
+
+function fuzzyMatchCache(cache) {
+    var key
+    for (var id in cache) {
+        var key = id
+        break
+    }
+    if (key) {
+        return isInCache(cache, key)
+    }
+}

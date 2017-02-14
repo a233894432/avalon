@@ -1,168 +1,222 @@
-var update = require('./_update')
-
-var dir = avalon.directive('validate', {
-//验证单个表单元素
-    parse: function (binding, num) {
-        return 'vnode' + num + '.props["ms-validate"] = ' + avalon.parseExpr(binding) + ';\n'
-    },
-    diff: function (cur, pre, steps, name) {
-        var validator = cur.props[name]
-        var p = pre.props[name]
-        if (p && p.onError && p.addField) {
-            cur.props[name] = p
-        } else if (Object(validator) === validator) {
-            if(validator.$id){//转换为普通对象
-                validator = validator.$model
-            }
-            cur.props[name] = validator
-            for(var name in dir.defaults){
-                if(!validator[name]){
-                    validator[name] = dir.defaults[name]
+import { avalon, isObject, platform } from '../seed/core'
+var valiDir = avalon.directive('validate', {
+    diff: function(validator) {
+        var vdom = this.node
+        if (vdom.validator) {
+            return
+        }
+        if (isObject(validator)) {
+            //注意，这个Form标签的虚拟DOM有两个验证对象
+            //一个是vmValidator，它是用户VM上的那个原始子对象，也是一个VM
+            //一个是validator，它是vmValidator.$model， 这是为了防止IE6－8添加子属性时添加的hack
+            //也可以称之为safeValidate
+            vdom.vmValidator = validator
+            validator = platform.toJson(validator)
+            validator.vdom = vdom
+            vdom.validator = validator
+            for (var name in valiDir.defaults) {
+                if (!validator.hasOwnProperty(name)) {
+                    validator[name] = valiDir.defaults[name]
                 }
             }
             validator.fields = validator.fields || []
-            update(cur, this.update, steps, 'validate' )
-
+            return true
         }
     },
-    update: function (node, vnode) {
-        var validator = vnode.props['ms-validate']
-        node._ms_validator_ = validator
-        validator.element = node
-        node.setAttribute("novalidate", "novalidate");
+    update: function(vdom) {
+        
+        var validator = vdom.validator
+        var dom = validator.dom = vdom.dom
+        dom._ms_validate_ = validator
+        var fields = validator.fields
+        collectFeild(vdom.children, fields, validator)
+        avalon.bind(document, 'focusin', function(e) {
+            var dom = e.target
+            var duplex = dom._ms_duplex_
+            var vdom = (duplex || {}).vdom
+            if (duplex && vdom.rules && !duplex.validator) {
+                if (avalon.Array.ensure(fields, duplex)) {
+                    bindValidateEvent(duplex, validator)
+                }
+
+            }
+        })
+        
+        //为了方便用户手动执行验证，我们需要为原始vmValidate上添加一个onManual方法
+        var v = vdom.vmValidator
+        try {
+            v.onManual = onManual
+        } catch (e) {}
+        delete vdom.vmValidator
+
+        dom.setAttribute('novalidate', 'novalidate')
+
+        function onManual() {
+            valiDir.validateAll.call(validator, validator.onValidateAll)
+        }
+        /* istanbul ignore if */
         if (validator.validateAllInSubmit) {
-            avalon.bind(node, "submit", function (e) {
+            avalon.bind(dom, 'submit', function(e) {
                 e.preventDefault()
-                dir.validateAll.call(validator, validator.onValidateAll)
+                onManual()
             })
         }
-        if (typeof validator.onInit === "function") { //vmodels是不包括vmodel的
-            validator.onInit.call(node)
-        }
+        
     },
-    validateAll: function (callback) {
+    validateAll: function(callback) {
         var validator = this
-        var fn = typeof callback === "function" ? callback : validator.onValidateAll
-        var promise = validator.fields.filter(function (field) {
-            var el = field.element
-            return el && !el.disabled && validator.element.contains(el)
-        }).map(function (field) {
-            return dir.validate(field, true)
+        var vdom = this.vdom
+        var fields = validator.fields = []
+        collectFeild(vdom.children, fields, validator)
+        var fn = typeof callback === 'function' ? callback : validator.onValidateAll
+        var promises = validator.fields.filter(function(field) {
+            var el = field.dom
+            return el && !el.disabled && validator.dom.contains(el)
+        }).map(function(field) {
+            return valiDir.validate(field, true)
         })
-        var reasons = []
-        Promise.all(promise).then(function (array) {
-            for (var i = 0, el; el = array[i++]; ) {
-                reasons = reasons.concat(el)
-            }
+        var uniq = {}
+        return Promise.all(promises).then(function(array) {
+            var reasons = array.concat.apply([], array)
             if (validator.deduplicateInValidateAll) {
-                var uniq = {}
-                reasons = reasons.filter(function (field) {
-                    var el = field.element
-                    var uuid = el.uniqueID || (el.uniqueID = setTimeout("1"))
+
+                reasons = reasons.filter(function(reason) {
+                    var el = reason.element
+                    var uuid = el.uniqueID || (el.uniqueID = setTimeout('1'))
+
                     if (uniq[uuid]) {
                         return false
                     } else {
-                        uniq[uuid] = true
-                        return true
+                        return uniq[uuid] = true
                     }
                 })
             }
-            fn.call(validator.element, reasons) //这里只放置未通过验证的组件
+            fn.call(validator.dom, reasons) //这里只放置未通过验证的组件
         })
     },
-    addField: function (field) {
-        var validator = this
-        var node = field.element
-        if (validator.validateInKeyup && (!field.isChanged &&!field.debounceTime)) {
-            avalon.bind(node, 'keyup', function (e) {
-                 dir.validate(field, 0, e)
-            })
-        }
-        if (validator.validateInBlur) {
-            avalon.bind(node, 'blur', function (e) {
-                dir.validate(field, 0, e)
-            })
-        }
-        if (validator.resetInFocus) {
-            avalon.bind(node, 'focus', function (e) {
-                validator.onReset.call(node, e, field)
-            })
-        }
-    },
-    validate: function (field, isValidateAll, event) {
+    
+    validate: function(field, isValidateAll, event) {
         var promises = []
-        var value = field.get(field.vmodel)
-        var elem = field.element
-        var validator = field.validator
+        var value = field.value
+        var elem = field.dom
+
+        /* istanbul ignore if */
+        if (typeof Promise !== 'function') { //avalon-promise不支持phantomjs
+            avalon.warn('浏览器不支持原生Promise,请下载并<script src=url>引入\nhttps://github.com/RubyLouvre/avalon/blob/master/test/promise.js')
+        }
+        /* istanbul ignore if */
         if (elem.disabled)
             return
-        for (var ruleName in field.rules) {
-            var ruleValue = field.rules[ruleName]
-            if (ruleValue === false)
-                continue
-            var hook = avalon.validators[ruleName]
-            var resolve, reject
-            promises.push(new Promise(function (a, b) {
-                resolve = a
-                reject = b
-            }))
-            var next = function (a) {
-                if (field.norequired && value === "") {
-                    a = true
-                }
-                if (a) {
-                    resolve(true)
-                } else {
+        var rules = field.vdom.rules
+        var ngs = [],
+            isOk = true
+        if (!(rules.norequired && value === '')) {
+            for (var ruleName in rules) {
+                var ruleValue = rules[ruleName]
+                if (ruleValue === false)
+                    continue
+                var hook = avalon.validators[ruleName]
+                var resolve
+                promises.push(new Promise(function(a, b) {
+                    resolve = a
+                }))
+                var next = function(a) {
                     var reason = {
                         element: elem,
                         data: field.data,
-                        message: elem.getAttribute("data-" + ruleName + "-message") || elem.getAttribute("data-message") || hook.message,
+                        message: elem.getAttribute('data-' + ruleName + '-message') || elem.getAttribute('data-message') || hook.message,
                         validateRule: ruleName,
                         getMessage: getMessage
                     }
-                    resolve(reason)
+                    if (a) {
+                        resolve(true)
+                    } else {
+                        isOk = false
+                        ngs.push(reason)
+                        resolve(false)
+                    }
                 }
+                field.data = {}
+                field.data[ruleName] = ruleValue
+                hook.get(value, field, next)
             }
-            field.data = {}
-            field.data[ruleName] = ruleValue
-            hook.get(value, field, next)
         }
-        var reasons = []
+
         //如果promises不为空，说明经过验证拦截器
-        var lastPromise = Promise.all(promises).then(function (array) {
-            for (var i = 0, el; el = array[i++]; ) {
-                if (typeof el === "object") {
-                    reasons.push(el)
-                }
-            }
+        return Promise.all(promises).then(function(array) {
             if (!isValidateAll) {
-                if (reasons.length) {
-                    validator.onError.call(elem, reasons, event)
+                var validator = field.validator
+                if (isOk) {
+                    validator.onSuccess.call(elem, [{
+                        data: field.data,
+                        element: elem
+                    }], event)
                 } else {
-                    validator.onSuccess.call(elem, reasons, event)
+                    validator.onError.call(elem, ngs, event)
                 }
-                validator.onComplete.call(elem, reasons, event)
+                validator.onComplete.call(elem, ngs, event)
             }
-            return reasons
+            return ngs
         })
-        return lastPromise
     }
 })
 
+function collectFeild(nodes, fields, validator) {
+    for (var i = 0, vdom; vdom = nodes[i++];) {
+        var duplex = vdom.rules && vdom.duplex
+        if (duplex) {
+            fields.push(duplex)
+            bindValidateEvent(duplex, validator)
+        } else if (vdom.children) {
+            collectFeild(vdom.children, fields, validator)
+        } else if (Array.isArray(vdom)) {
+            collectFeild(vdom, fields, validator)
+        }
+    }
+}
+
+function bindValidateEvent(field, validator) {
+
+    var node = field.dom
+    if (field.validator) {
+        return
+    }
+    field.validator = validator
+        /* istanbul ignore if */
+    if (validator.validateInKeyup && (!field.isChanged && !field.debounceTime)) {
+        avalon.bind(node, 'keyup', function(e) {
+            validator.validate(field, 0, e)
+        })
+    }
+    /* istanbul ignore if */
+    if (validator.validateInBlur) {
+        avalon.bind(node, 'blur', function(e) {
+            validator.validate(field, 0, e)
+        })
+    }
+    /* istanbul ignore if */
+    if (validator.resetInFocus) {
+        avalon.bind(node, 'focus', function(e) {
+            validator.onReset.call(node, e, field)
+        })
+    }
+}
 var rformat = /\\?{{([^{}]+)\}}/gm
 
 function getMessage() {
     var data = this.data || {}
-    return this.message.replace(rformat, function (_, name) {
-        return data[name] == null ? "" : data[name]
+    return this.message.replace(rformat, function(_, name) {
+        return data[name] == null ? '' : data[name]
     })
 }
-dir.defaults = {
-    addField: dir.addField,
+valiDir.defaults = {
+    validate: valiDir.validate,
     onError: avalon.noop,
     onSuccess: avalon.noop,
     onComplete: avalon.noop,
+    onManual: avalon.noop,
     onReset: avalon.noop,
+    onValidateAll: avalon.noop,
     validateInBlur: true, //@config {Boolean} true，在blur事件中进行验证,触发onSuccess, onError, onComplete回调
     validateInKeyup: true, //@config {Boolean} true，在keyup事件中进行验证,触发onSuccess, onError, onComplete回调
     validateAllInSubmit: true, //@config {Boolean} true，在submit事件中执行onValidateAll回调

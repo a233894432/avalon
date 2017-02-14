@@ -1,71 +1,56 @@
-var patch = require('../strategy/patch')
-var update = require('./_update')
+import { avalon, createAnchor } from '../seed/core'
 
-//ms-imporant ms-controller ms-for ms-widget ms-effect ms-if   ...
 avalon.directive('if', {
-    priority: 6,
-    parse: function (binding, num) {
-        var vnode = 'vnode' + num
-        var ret = [
-            'var ifVar = ' + avalon.parseExpr(binding, 'if'),
-            vnode + '.props["ms-if"] = ifVar;',
-            'if(!ifVar){',
-            vnode + '.nodeType = 8;',
-            vnode + '.directive="if";',
-            vnode + '.nodeValue="ms-if"', '}'
-        ]
-        return ret.join('\n') + '\n'
+    delay: true,
+    priority: 5,
+    init: function() {
+        this.placeholder = createAnchor('if')
+        var props = this.node.props
+        delete props['ms-if']
+        delete props[':if']
+        this.fragment = avalon.vdom(this.node, 'toHTML')
     },
-    diff: function (cur, pre, steps) {
-        cur.dom = pre.dom
-        if (cur.nodeType !== pre.nodeType) {
-            cur.steps = steps
-            update(cur, this.update, steps, 'if' )
+    diff: function(newVal, oldVal) {
+        var n = !!newVal
+        if (oldVal === void 0 || n !== oldVal) {
+            this.value = n
+            return true
         }
     },
-    update: function (node, vnode, parent) {
-        var dtype = node.nodeType
-        var vtype = vnode.nodeType
-        if (dtype !== vtype) {
-            if (vtype === 1) {
-                //要插入元素节点,将原位置上的注释节点移除并cache
-                var element = vnode.dom
-                if (!element) {
-                    element = avalon.vdomAdaptor(vnode, 'toDOM')
-                    vnode.dom = element
-                    var props = vnode.props
-                    for (var prop in props) {//如果一开始是隐藏,那么事件会没有绑上
-                        if (prop.match(/ms\-on/g)) {
-                            var fun = props[prop]
-                            if (typeof fun === 'function') {
-                                element._ms_context_ = vnode.onVm
-                                avalon.bind(element, prop.split('-')[2], fun)
-                            }
-                        }
-                    }
-                    if (vnode.onVm) delete vnode.onVm
-                }
-                parent.replaceChild(element, node)
-                if (vnode.steps.count) {
-                    patch([element], [vnode], parent, vnode.steps)
-                }
-                avalon.applyEffect(node, vnode, {
-                    hook: 'onEnterDone'
-                })
-                return (vnode.steps = false)
-            } else if (vtype === 8) {
-                //要移除元素节点,在对应位置上插入注释节点
-                avalon.applyEffect(node, vnode, {
-                    hook: 'onLeaveDone',
-                    cb: function () {
-                        var comment = node._ms_if_ ||
-                                (node._ms_if_ = document.createComment(vnode.nodeValue))
+    update: function(vdom, value) {
+        if (this.isShow === void 0 && value) {
+            continueScan(this, vdom)
+            return
+        }
+        this.isShow = value
+        var placeholder = this.placeholder
 
-                        parent.replaceChild(comment, node)
-                    }
-                })
+        if (value) {
+            var p = placeholder.parentNode
+            continueScan(this, vdom)
+            p && p.replaceChild(vdom.dom, placeholder)
+        } else { //移除DOM
+            this.beforeDispose()
+            vdom.nodeValue = 'if'
+            vdom.nodeName = '#comment'
+            delete vdom.children
+            var dom = vdom.dom
+            var p = dom && dom.parentNode
+            vdom.dom = placeholder
+            if (p) {
+                p.replaceChild(placeholder, dom)
             }
+        }
+    },
+    beforeDispose: function(){
+        if (this.innerRender) {
+            this.innerRender.dispose()
         }
     }
 })
 
+function continueScan(instance, vdom) {
+    var innerRender = instance.innerRender = avalon.scan(instance.fragment, instance.vm)
+    avalon.shadowCopy(vdom, innerRender.root)
+    delete vdom.nodeValue
+}

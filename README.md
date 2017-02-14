@@ -1,79 +1,105 @@
-#avalon 2 
+![](./components/logo.png)
+-------
 
-基于avalon1.6内部版本研发出来，兼容IE6及各种山寨浏览器,
-视浏览器的支持情况使用VBScript/Descriptors/Proxy创建vm,
-以求取最高的性能
-###[avalon2官网](http://avalonjs.coding.me/)
+<p align="center">
+<a href="https://badge.fury.io/js/avalon2">
+<img src="https://badge.fury.io/js/avalon2.svg" alt="npm version" height="18">
+</a>
+<a href="https://travis-ci.org/RubyLouvre/avalon">
+<img src="https://travis-ci.org/RubyLouvre/avalon.svg?branch=master" alt="Travis CI Status"/>
+</a>
+<a href="https://codeclimate.com/github/RubyLouvre/avalon"><img src="https://codeclimate.com/github/RubyLouvre/avalon/badges/gpa.svg" /></a>
+
+<a href="https://codecov.io/gh/RubyLouvre/avalon">
+  <img src="https://codecov.io/gh/RubyLouvre/avalon/branch/master/graph/badge.svg" alt="Codecov" />
+</a>
+
+<a href="https://github.com/RubyLouvre/avalon">
+<img src="https://camo.githubusercontent.com/fc56303af12c023343f338a762b6bfb2a5f1e4dc/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f6c6963656e73652d4d49542d677265656e2e7376673f7374796c653d666c6174" alt="LICENSE" data-canonical-src="https://img.shields.io/badge/license-MIT-green.svg?style=flat" style="max-width:100%;"></a>
+<a href="https://saucelabs.com/beta/builds/7c80ed0dd7b34c55815d65a132ff0226"><img src="https://saucelabs.com/buildstatus/rubylouvre" alt="Build Status"></a>
+</p>
+<p align="center">
+<a href="https://saucelabs.com/beta/builds/7c80ed0dd7b34c55815d65a132ff0226"><img src="https://saucelabs.com/browser-matrix/rubylouvre.svg" alt="Browser Matrix"></a>
+</p>
 
 ```javascript
 npm install avalon2
 ```
 
-<img src='https://github.com/RubyLouvre/avalon/blob/master/structure.jpg'/>
+es6调用方式 
+```
+import * as avalon from 'avalon2'
+```
 
-主要特征如下：
+###[English tutorials](https://github.com/RubyLouvre/avalon/tree/master/tutorials)
 
-1. ms-*属性的行为全部统一
+###[avalon cookbook](https://github.com/RubyLouvre/avalon/blob/2.1.8/avalon%20cookbook.pdf)
 
-2. 使用虚拟DOM提高性能，确保更新是从上到下，从外到内，并且能准确知道渲染结束的时机，从而更好地支持扫描后的回调
-    流程如下:
-    
-    ```
-    el.outerHTML --> vtree1 --> render模板函数 --> vtree2 --> diff vtree2, vtree1 --> batch更新
-    
-    ````
+这是基于官网制成的电子书,方便大家离线阅览
 
-3. 去掉html过滤，所有绑定属性支持过滤器
+###[avalon2官网](http://avalonjs.coding.me/)
+这是基于gitbook制作的,对移动端支持很好,大家上班或睡觉时,可以过目一下.
 
-4. ms-duplex 拥有四个数据转换
-<blockquote>
-   ms-duplex-string  如果为null, undefined, 转换为'', 其他转字符串<br/>
-   ms-duplex-number  如果元素的值为'',则为'',其他情况调用parseFloat, 若结果为NaN,转0<br/>
-   ms-duplex-boolean 如果元素的值为'true'则转换为true,其他为false<br/>
-   ms-duplex-checked 根据原来元素的checked属性取反
-</blockquote>
-   在其表达式后方的过滤器,除了change与debounce,都是用于格式化元素的值
-   change过滤器, 用于延迟数据在元素失去焦点后才同步视图
-   debounce(100)过滤器, 必须指定数字并大于4, 用于延迟n毫秒后才同步视图
+###[avalon2+webpack2手脚架](https://github.com/sayll/avalon-webpack-start)
 
-   
+###[QuickStart](https://github.com/crazyliuzc/webpack-avalon2-SPA-seed.git)
+大家期望已久的avalon2+mmRouter+各种组件的综合示例,不断完善中
 
-5. 对数组元素的属性监听或子对象的属性监听更加完善 ($watch方法)
+###[友情推广朋友写的UI库](http://weeksun23.github.io/AvalonBootstrap/index.html#overview)
+基于avalon2+bootstrap
 
-6. for指令取替旧的repeat指令, 使用ng－preatng-repeat="(k,v) in array"的风格. <br>
+CDN: `https://unpkg.com/avalon2@2.2.4/dist/avalon.js`
+用法见[https://unpkg.com/#/](https://unpkg.com/#/)
 
-   for指令有两种形式
-   
-   ```javascript
-   <div ms-for="el in @attr">{{el}}</div>
-   <!--ms-for:el in @attr-->
-   <div>{{el}}</div>
-   <!--ms-for-end:-->
+###谁在用avalon
 
-   ```
-   上面的@符合是用来标识此变量或方法是来自vm的,此外为了防止与.NET的razor引擎相冲突,也可以使用#符合
-   for指令拥有4个数组(或对象)过滤器(selectBy,orderBy,limitBy,filterBy) 
+<img src='http://avalonjs.coding.me/styles/logos.jpg' width='639' height='477' />
 
-	+ selectBy(keyList)用于取代 data-with-sorted,从一个对象取得指定的属性值
-	+ orderBy(key, -1或1)用于排序
-	+ limitBy(limit, begin?)用于对字符串,数字或数组,进行slice操作
-	+ filterBy(search)用于根据元素值或对象的键值是否包含search,进行过滤
+`欢迎大家提交logo与官网链接`
 
-7. 事件指令支持11个事件过滤器(stop, prevent, up,down,right, left, esc,tab, enter,space,del)
-并且使用类似react的事件代理机制减少事件句柄,优化性能
 
-8. 内置HTML parser,支持后端渲染
-9. 添加 avalon.Array.merge方法
-10.  去掉AMD内置加载器，建议使用webpack打包工程
-11.  vm去掉对计算属性的支持
-12.  添加`<!--js: code -->`指令，方便插入JS逻辑，实现定义中间变量（如计算属性）
-13. avalon支持直接在IE6下使用`<ms-panel>`这样的自定义标签, <br>
-    支持onInit, onReady, onViewChange, onDispose四个生命周期回调<br>
-    支持传入$diff方法 实现react的shouldComponentUpdate功能<br/>
-    支持<slot name='xx'></slot>这样的DOM插槽 机制<br/>
-    支持组件套组件
-14. 测试 karma start
-15.  ms-important与ms-controller对应的vm.$id一个页面上只能用一次,不能存在多个同名的ms-controller.
+###超高性能
+
+<img src="http://avalonjs.coding.me/styles/performance.jpg" width='770' height='451' />
+
+
+
+
+
+
+测试页面 perf目录下的index.html, index1.4.html, index-ng.html, index-vue.html,index-react.html
+
+亮点,如果页面上存在一个大表格或列表,其他框架会在浏览器加载页面时会卡一下(白屏), 
+而avalon则平缓多了
+
+thanks http://charts.udpwork.com/
+
+###支持后端渲染
+
+avalon2.1.5起支持后端渲染,详见[这里](https://github.com/RubyLouvre/avalon-server-render-example)
+
+
+### [avalon2 学习教程(包括组件)](https://segmentfault.com/u/situzhengmei/articles)
+
+
+HTML指南
+
+属性值必须用双引号括起,标签名必须小写, 标签必须被关闭（正常关闭，或自关闭）
+
+组件, 在兼容IE6-8的情况下,组件必须用wbr, xmp做容器
+
+组件名如果不充当标签名,可以不以ms-开头.
+
+绑定属性建议使用短指令方式定义,即ms-if可以改成:if
+
+ms-duplex指令除了change, rebounce过滤器外,不建议使用其他过滤器做格式化,
+建议添加ms-input, ms-change在里面处理
+
+ms-duplex不支持对简单数组的元素的处理, 即`vm.arr = [1,2,4]`,
+`<input :for="el in @arr" duplex="el"`
+
+
+ms-important与ms-controller对应的vm.$id一个页面上只能用一次,不能存在多个同名的ms-controller.
      ms-important由于不继承上级的$element与$render,每次只更新它所在的区域,善用它能大大提高性能
 ```html
    <div ms-controller='test'>{{@aaa}}</div>

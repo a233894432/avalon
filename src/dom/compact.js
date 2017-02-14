@@ -4,13 +4,13 @@
  * shim,class,data,css,val,html,event,ready  
  * ------------------------------------------------------------
  */
-require('./shim/compact')
-require('./class/compact')
-require('./data/compact')
-require('./css/compact')
-require('./val/compact')
-require('./html/compact')
-require('./event/compact')
-require('./ready/compact')
 
-module.exports = avalon
+import './shim/compact'
+import './class/compact'
+import './attr/compact'
+import './css/compact'
+import './val/compact'
+import './html/index'
+import './event/compact'
+import './ready/compact'
+

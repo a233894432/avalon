@@ -1,100 +1,93 @@
 //根据VM的属性值或表达式的值切换类名，ms-class='xxx yyy zzz:flag'
 //http://www.cnblogs.com/rubylouvre/archive/2012/12/17/2818540.html
-var markID = require('../seed/lang.share').getLongID
-var update = require('./_update')
+import { avalon, directives, getLongID as markID } from '../seed/core'
 
-var directives = avalon.directives
+function classNames() {
+    var classes = []
+    for (var i = 0; i < arguments.length; i++) {
+        var arg = arguments[i]
+        var argType = typeof arg
+        if (argType === 'string' || argType === 'number' || arg === true) {
+            classes.push(arg)
+        } else if (Array.isArray(arg)) {
+            classes.push(classNames.apply(null, arg))
+        } else if (argType === 'object') {
+            for (var key in arg) {
+                if (arg.hasOwnProperty(key) && arg[key]) {
+                    classes.push(key)
+                }
+            }
+        }
+    }
+
+    return classes.join(' ')
+}
+
+
+
 avalon.directive('class', {
-    parse: function (binding, num) {
-        //必须是布尔对象或字符串数组
-        return 'vnode' + num + '.props["' + binding.name + '"] = ' + avalon.parseExpr(binding) + ';\n'
-    },
-    diff: function (cur, pre, steps, name) {
-        var type = name.slice(3)
-        var curValue = cur.props[name]
-        var preValue = pre.props[name]
-        if (!pre.classEvent) {
-            var classEvent = {}
-            if (type === 'hover') {//在移出移入时切换类名
-                classEvent.mouseenter = activateClass
-                classEvent.mouseleave = abandonClass
-            } else if (type === 'active') {//在获得焦点时切换类名
-                cur.props.tabindex = cur.props.tabindex || -1
-                classEvent.tabIndex = cur.props.tabindex
-                classEvent.mousedown = activateClass
-                classEvent.mouseup = abandonClass
-                classEvent.mouseleave = abandonClass
-            }
-            cur.classEvent = classEvent
-        } else {
-            cur.classEvent = pre.classEvent
+    diff: function (newVal, oldVal) {
+        var type = this.type
+        var vdom = this.node
+        var classEvent = vdom.classEvent || {}
+        if (type === 'hover') {//在移出移入时切换类名
+            classEvent.mouseenter = activateClass
+            classEvent.mouseleave = abandonClass
+        } else if (type === 'active') {//在获得焦点时切换类名
+            classEvent.tabIndex = vdom.props.tabindex || -1
+            classEvent.mousedown = activateClass
+            classEvent.mouseup = abandonClass
+            classEvent.mouseleave = abandonClass
         }
-        pre.classEvent = null
+        vdom.classEvent = classEvent
 
-        var className = avalon.noop
-        if (Array.isArray(curValue)) {
-            //处理复杂的一维数组
-           className = curValue.map(function(el){
-                return el && typeof el === 'object' ? processBooleanObject(el) :
-                        el ? el : ''
-            }).join(' ')
-        } else if (avalon.isObject(curValue)) {
-            //处理布尔对象
-            className = processBooleanObject(curValue)
-        } else if (curValue) {
-            //处理其他真值，如字符串，数字
-            className = String(curValue)
-        }
-        if(className === avalon.noop){
-            return
-        }
-        className = cur.props[name] = className.trim().replace(/\s+/, ' ')
-        if (preValue !== className) {
-            cur['change-' + type] = className
-            update(cur, this.update, steps, type )
+        var className = classNames(newVal)
+
+        if (typeof oldVal === void 0 || oldVal !== className) {
+            this.value = className
+
+            vdom['change-' + type] = className
+            return true
         }
     },
-    update: function (node, vnode) {
-   
-        if(!node || node.nodeType !==1)
-            return
-        var classEvent = vnode.classEvent
-        if (classEvent) {
-            for (var i in classEvent) {
-                if (i === 'tabIndex') {
-                    node[i] = classEvent[i]
+    update: function (vdom, value) {
+        var dom = vdom.dom
+        if (dom && dom.nodeType == 1) {
+
+            var dirType = this.type
+            var change = 'change-' + dirType
+            var classEvent = vdom.classEvent
+            if (classEvent) {
+                for (var i in classEvent) {
+                    if (i === 'tabIndex') {
+                        dom[i] = classEvent[i]
+                    } else {
+                        avalon.bind(dom, i, classEvent[i])
+                    }
+                }
+                vdom.classEvent = {}
+            }
+            var names = ['class', 'hover', 'active']
+            names.forEach(function (type) {
+                if (dirType !== type)
+                    return
+                if (type === 'class') {
+                    dom && setClass(dom, value)
                 } else {
-                    avalon.bind(node, i, classEvent[i])
+                    var oldClass = dom.getAttribute(change)
+                    if (oldClass) {
+                        avalon(dom).removeClass(oldClass)
+                    }
+                    var name = 'change-' + type
+                    dom.setAttribute(name, value)
                 }
-            }
-            vnode.classEvent = {}
+            })
         }
-        var names = ['class', 'hover', 'active']
-        names.forEach(function (type) {
-            var name = 'change-' + type
-            var value = vnode[ name ]
-            if (value === void 0)
-                return
-            if (type === 'class') {
-                node && setClass(node, vnode)
-            } else {
-                var oldType = node.getAttribute('change-'+type)
-                if (oldType) {
-                    avalon(node).removeClass(oldType)
-                }
-                node.setAttribute(name, value)
-            }
-        })
     }
 })
 
 directives.active = directives.hover = directives['class']
 
-function processBooleanObject(obj) {
-    return Object.keys(obj).filter(function (name) {
-        return obj[name]
-    }).join(' ')
-}
 
 var classMap = {
     mouseenter: 'change-hover',
@@ -117,14 +110,15 @@ function abandonClass(e) {
     }
 }
 
-function setClass(node, vnode) {
-    var old = node.getAttribute('old-change-class') || ''
-    var neo = vnode.props['ms-class']
-    avalon(node).removeClass(old).addClass(neo)
-    node.setAttribute('old-change-class', neo)
+function setClass(dom, neo) {
+    var old = dom.getAttribute('change-class')
+    if (old !== neo) {
+        avalon(dom).removeClass(old).addClass(neo)
+        dom.setAttribute('change-class', neo)
+    }
+
 }
 
 markID(activateClass)
 markID(abandonClass)
-
 

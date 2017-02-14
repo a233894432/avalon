@@ -1,4 +1,5 @@
-var update = require('./_update')
+import { avalon } from '../seed/core'
+import '../effect/index'
 
 var none = 'none'
 function parseDisplay(elem, val) {
@@ -8,11 +9,7 @@ function parseDisplay(elem, val) {
     var key = '_' + nodeName
     if (!parseDisplay[key]) {
         var temp = doc.body.appendChild(doc.createElement(nodeName))
-        if (avalon.modern) {
-            val = getComputedStyle(temp, null).display
-        } else {
-            val = temp.currentStyle.display
-        }
+        val = avalon.css(temp, 'display')
         doc.body.removeChild(temp)
         if (val === none) {
             val = 'block'
@@ -23,50 +20,55 @@ function parseDisplay(elem, val) {
 }
 
 avalon.parseDisplay = parseDisplay
-
 avalon.directive('visible', {
-    parse: function (binding, num) {
-        return 'vnode' + num + '.props["ms-visible"] = ' + avalon.parseExpr(binding) + ';\n'
-    },
-    diff: function (cur, pre, steps, name) {
-        var c = cur.props[name] = !!cur.props[name]
-        cur.displayValue = pre.displayValue
-        if (c !== pre.props[name]) {
-            update(cur, this.update, steps, 'visible' )
+    diff: function (newVal, oldVal) {
+        var n = !!newVal
+        if (oldVal === void 0 || n !== oldVal) {
+            this.value = n
+            return true
         }
     },
-    update: function (node, vnode) {
-        var show = vnode.props['ms-visible']
-        var display = node.style.display
-        var value
-        if (show) {
-            if (display === none) {
-                value = vnode.displayValue
-                if (!value) {
-                    node.style.display = ''
+    ready: true,
+    update: function (vdom, show) {     
+        var dom = vdom.dom
+        if (dom && dom.nodeType === 1) {
+            var display = dom.style.display
+            var value
+            if (show) {
+                if (display === none) {
+                    value = vdom.displayValue
+                    if (!value) {
+                        dom.style.display = ''
+                        if (dom.style.cssText === '') {
+                            dom.removeAttribute('style')
+                        }
+                    }
+                }
+                if (dom.style.display === '' && avalon(dom).css('display') === none &&
+                    // fix firefox BUG,必须挂到页面上
+                    avalon.contains(dom.ownerDocument, dom)) {
+                    value = parseDisplay(dom)
+                }
+
+            } else {
+
+                if (display !== none) {
+                    value = none
+                    vdom.displayValue = display
                 }
             }
-            if (node.style.display === '' && avalon(node).css('display') === none &&
-                    // fix firefox BUG,必须挂到页面上
-                    avalon.contains(node.ownerDocument, node)) {
+            var cb = function () {
+                if (value !== void 0) {
+                    dom.style.display = value
+                }
+            }
+     
+            avalon.applyEffect(dom, vdom, {
+                hook: show ? 'onEnterDone' : 'onLeaveDone',
+                cb: cb
+            })
+        }
 
-                value = parseDisplay(node)
-            }
-        } else {
-            if (display !== none) {
-                value = none
-                vnode.displayValue = display
-            }
-        }
-        function cb(){
-           if (value !== void 0) {
-              node.style.display = value
-           }
-        }
-        avalon.applyEffect(node, vnode, {
-            hook: show ? 'onEnterDone': 'onLeaveDone',
-            cb: cb
-        })
     }
 })
 

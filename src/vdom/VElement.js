@@ -1,97 +1,165 @@
+import { avalon, document, msie } from '../seed/core'
 
-function VElement(type, props, children) {
-    if (typeof type === 'object') {
-        for (var i in type) {
-            this[i] = type[i]
-        }
-    } else {
-        this.nodeType = 1
-        this.type = type
-        this.props = props
-        this.children = children
-        this.template = ''
-    }
-}
-function skipFalseAndFunction(a) {
-    return a !== false && (Object(a) !== a)
-}
-var specal = {
-    "class": function (dom, val) {
-        dom.className = val
-    },
-    style: function (dom, val) {
-        dom.style.cssText = val
-    },
-    'for': function (dom, val) {
-        dom.htmlFor = val
-    }
+export function VElement(type, props, children, isVoidTag) {
+    this.nodeName = type
+    this.props = props
+    this.children = children
+    this.isVoidTag = isVoidTag
 }
 VElement.prototype = {
     constructor: VElement,
-    toDOM: function () {
-        var dom = document.createElement(this.type)
-        for (var i in this.props) {
-            var val = this.props[i]
+    toDOM() {
+        if (this.dom)
+            return this.dom
+        var dom, tagName = this.nodeName
+        if (avalon.modern && svgTags[tagName]) {
+            dom = createSVG(tagName)
+                /* istanbul ignore next*/
+        } else if (!avalon.modern && (VMLTags[tagName] || rvml.test(tagName))) {
+            dom = createVML(tagName)
+        } else {
+            dom = document.createElement(tagName)
+        }
+
+        var props = this.props || {}
+
+        for (var i in props) {
+            var val = props[i]
             if (skipFalseAndFunction(val)) {
-                if (specal[i] && avalon.msie < 8) {
-                    specal[i](dom, val)
+                /* istanbul ignore if*/
+                if (specalAttrs[i] && avalon.msie < 8) {
+                    specalAttrs[i](dom, val)
                 } else {
                     dom.setAttribute(i, val + '')
                 }
             }
         }
-        if (this.skipContent) {
-            switch (this.type) {
-                case 'script':
-                    dom.text = this.template
-                    break
-                case 'style':
-                case 'template':
-                    dom.innerHTML = this.template
-                    break
-                case 'noscript':
-                    dom.textContent = this.template
-                    break
-                default:
-                    var a = avalon.parseHTML(this.template)
-                    dom.appendChild(a)
-                    break
-            }
-
-        } else if (!this.isVoidTag) {
-            if (this.children.length) {
-                this.children.forEach(function (c) {
-                    c && dom.appendChild(avalon.vdomAdaptor(c, 'toDOM'))
-                })
-            } else {
-                dom.appendChild(avalon.parseHTML(this.template))
-            }
+        var c = this.children || []
+        var template = c[0] ? c[0].nodeValue : ''
+        switch (this.nodeName) {
+            case 'script':
+                dom.type = 'noexec'
+                 dom.text = template
+                 try{
+                     dom.innerHTML = template
+                 }catch(e){}
+                dom.type = props.type || ''
+                break
+            case 'noscript':
+                dom.textContent = template
+            case 'style':
+            case 'xmp':
+            case 'template':
+                try {
+                    dom.innerHTML = template
+                } catch (e) {
+                    /* istanbul ignore next*/
+                    hackIE(dom, this.nodeName, template)
+                }
+                break
+            case 'option':
+                //IE6-8,为option添加文本子节点,不会同步到text属性中
+                /* istanbul ignore next */
+                if (msie < 9)
+                    dom.text = template
+            default:
+                /* istanbul ignore next */
+                if (!this.isVoidTag && this.children) {
+                    this.children.forEach(el =>
+                        c && dom.appendChild(avalon.vdom(c, 'toDOM'))
+                    )
+                }
+                break
         }
-        return dom
+        return this.dom = dom
     },
-    toHTML: function () {
+    /* istanbul ignore next */
+   
+    toHTML() {
         var arr = []
-        for (var i in this.props) {
-            var val = this.props[i]
+        var props = this.props || {}
+        for (var i in props) {
+            var val = props[i]
             if (skipFalseAndFunction(val)) {
-                arr.push(i + '=' + avalon.quote(this.props[i] + ''))
+                arr.push(i + '=' + avalon.quote(props[i] + ''))
             }
         }
         arr = arr.length ? ' ' + arr.join(' ') : ''
-        var str = '<' + this.type + arr
+        var str = '<' + this.nodeName + arr
         if (this.isVoidTag) {
             return str + '/>'
         }
         str += '>'
-        if (this.children.length) {
-            str += this.children.map(function (c) {
-                return c ? avalon.vdomAdaptor(c, 'toHTML'): ''
-            }).join('')
-        } else {
-            str += this.template
+        if (this.children) {
+            str += this.children.map(
+                el => (el ? avalon.vdom(el, 'toHTML') : '')
+            ).join('')
         }
-        return str + '</' + this.type + '>'
+        return str + '</' + this.nodeName + '>'
+    }
+}
+ function hackIE(dom, nodeName, template) {
+        switch (nodeName) {
+            case 'style':
+                dom.setAttribute('type', 'text/css')
+                dom.styleSheet.cssText = template
+                break
+            case 'xmp': //IE6-8,XMP元素里面只能有文本节点,不能使用innerHTML
+            case 'noscript':
+                dom.textContent = template
+                break
+        }
+    }
+function skipFalseAndFunction(a) {
+    return a !== false && (Object(a) !== a)
+}
+/* istanbul ignore next */
+var specalAttrs = {
+    "class": function(dom, val) {
+        dom.className = val
+    },
+    style: function(dom, val) {
+        dom.style.cssText = val
+    },
+    type: function(dom, val) {
+        try { //textarea,button 元素在IE6,7设置 type 属性会抛错
+            dom.type = val
+        } catch (e) {}
+    },
+    'for': function(dom, val) {
+        dom.setAttribute('for', val)
+        dom.htmlFor = val
     }
 }
 
-module.exports = VElement
+function createSVG(type) {
+    return document.createElementNS('http://www.w3.org/2000/svg', type)
+}
+var svgTags = avalon.oneObject('circle,defs,ellipse,image,line,' +
+    'path,polygon,polyline,rect,symbol,text,use,g,svg')
+
+var rvml = /^\w+\:\w+/
+    /* istanbul ignore next*/
+function createVML(type) {
+    if (document.styleSheets.length < 31) {
+        document.createStyleSheet().addRule(".rvml", "behavior:url(#default#VML)");
+    } else {
+        // no more room, add to the existing one
+        // http://msdn.microsoft.com/en-us/library/ms531194%28VS.85%29.aspx
+        document.styleSheets[0].addRule(".rvml", "behavior:url(#default#VML)");
+    }
+    var arr = type.split(':')
+    if (arr.length === 1) {
+        arr.unshift('v')
+    }
+    var tag = arr[1]
+    var ns = arr[0]
+    if (!document.namespaces[ns]) {
+        document.namespaces.add(ns, "urn:schemas-microsoft-com:vml")
+    }
+    return document.createElement('<' + ns + ':' + tag + ' class="rvml">');
+}
+
+var VMLTags = avalon.oneObject('shape,line,polyline,rect,roundrect,oval,arc,' +
+    'curve,background,image,shapetype,group,fill,' +
+    'stroke,shadow, extrusion, textbox, imagedata, textpath')
